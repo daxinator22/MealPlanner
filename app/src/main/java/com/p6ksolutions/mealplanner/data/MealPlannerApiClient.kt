@@ -188,8 +188,7 @@ class MealPlannerApiClient(
 
     private fun JSONObject.toMealPlanEntry(): MealPlanEntry = MealPlanEntry(
         id = getInt("id"),
-        day = getString("day"),
-        dateLabel = optString("dateLabel"),
+        date = getString("date"),
         mealType = getString("mealType"),
         recipe = if (isNull("recipe")) null else getJSONObject("recipe").toRecipe()
     )

@@ -426,13 +426,11 @@ fun WeekPlanScreen(
 }
 
 private data class WeekDay(
-    val day: String,
-    val dateLabel: String
+    val date: String
 )
 
 private fun currentWeekDays(): List<WeekDay> {
-    val dayNameFormat = SimpleDateFormat("EEEE", Locale.getDefault())
-    val dateFormat = SimpleDateFormat("d", Locale.getDefault())
+    val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     val calendar = Calendar.getInstance()
     val firstDayOfWeek = calendar.firstDayOfWeek
 
@@ -442,8 +440,7 @@ private fun currentWeekDays(): List<WeekDay> {
 
     return List(7) {
         val weekDay = WeekDay(
-            day = dayNameFormat.format(calendar.time),
-            dateLabel = dateFormat.format(calendar.time)
+            date = dateFormat.format(calendar.time)
         )
         calendar.add(Calendar.DAY_OF_MONTH, 1)
         weekDay
@@ -451,23 +448,32 @@ private fun currentWeekDays(): List<WeekDay> {
 }
 
 private fun List<MealPlanEntry>.fitToCurrentWeek(): List<MealPlanEntry> {
-    val entriesByDay = associateBy { it.day.lowercase(Locale.getDefault()) }
+    val entriesByDate = associateBy { it.date }
 
     return currentWeekDays().mapIndexed { index, weekDay ->
-        val backendEntry = entriesByDay[weekDay.day.lowercase(Locale.getDefault())]
+        val backendEntry = entriesByDate[weekDay.date]
 
         backendEntry?.copy(
-            day = weekDay.day,
-            dateLabel = weekDay.dateLabel
+            date = weekDay.date
         ) ?: MealPlanEntry(
             id = -index - 1,
-            day = weekDay.day,
-            dateLabel = weekDay.dateLabel,
+            date = weekDay.date,
             mealType = "Dinner",
             recipe = null
         )
     }
 }
+
+private fun MealPlanEntry.dateLabel(): String = date.substringAfterLast('-')
+
+private fun MealPlanEntry.dayName(): String {
+    val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    val dayNameFormat = SimpleDateFormat("EEEE", Locale.getDefault())
+    val parsedDate = dateFormat.parse(date)
+    return if (parsedDate == null) "" else dayNameFormat.format(parsedDate)
+}
+
+private fun MealPlanEntry.shortDayName(): String = dayName().take(3)
 
 @Composable
 fun RecipesScreen(
@@ -640,12 +646,12 @@ fun CalendarDayTile(entry: MealPlanEntry, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = entry.day.take(3),
+            text = entry.shortDayName(),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = entry.dateLabel,
+            text = entry.dateLabel(),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             color = if (hasMeal) {
@@ -700,12 +706,12 @@ fun CalendarAgendaCard(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = entry.day.take(3).uppercase(),
+                    text = entry.shortDayName().uppercase(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Text(
-                    text = entry.dateLabel,
+                    text = entry.dateLabel(),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
