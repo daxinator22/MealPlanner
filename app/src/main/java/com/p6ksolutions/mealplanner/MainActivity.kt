@@ -23,8 +23,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -38,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,9 +50,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.p6ksolutions.mealplanner.model.MealPlanEntry
+import com.p6ksolutions.mealplanner.model.Recipe
+import com.p6ksolutions.mealplanner.ui.MealPlannerUiState
+import com.p6ksolutions.mealplanner.ui.MealPlannerViewModel
 import com.p6ksolutions.mealplanner.ui.theme.MealPlannerTheme
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,7 +77,27 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MealPlannerApp() {
+fun MealPlannerApp(viewModel: MealPlannerViewModel = viewModel()) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    MealPlannerContent(
+        uiState = uiState,
+        onLogin = viewModel::login,
+        onSignup = viewModel::signup,
+        onLogout = viewModel::logout,
+        onRetry = viewModel::loadMealPlannerData
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MealPlannerContent(
+    uiState: MealPlannerUiState,
+    onLogin: (String, String) -> Unit,
+    onSignup: (String, String, String) -> Unit,
+    onLogout: () -> Unit,
+    onRetry: () -> Unit
+) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var selectedRecipe by remember { mutableStateOf<Recipe?>(null) }
     val tabs = listOf("Week", "Recipes", "Suggest")
@@ -84,7 +116,8 @@ fun MealPlannerApp() {
                         Text(selectedRecipe?.name ?: "Meal Planner")
                         if (selectedRecipe == null) {
                             Text(
-                                text = "Plan dinners, save recipes, find ideas",
+                                text = uiState.user?.let { "Signed in as ${it.username}" }
+                                    ?: "Sign in to plan dinners, save recipes, find ideas",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
@@ -97,27 +130,39 @@ fun MealPlannerApp() {
                             Text("Back")
                         }
                     }
+                },
+                actions = {
+                    if (uiState.user != null) {
+                        TextButton(onClick = {
+                            selectedRecipe = null
+                            onLogout()
+                        }) {
+                            Text("Logout")
+                        }
+                    }
                 }
             )
         },
         bottomBar = {
-            NavigationBar {
-                tabs.forEachIndexed { index, label ->
-                    NavigationBarItem(
-                        selected = selectedTab == index,
-                        onClick = {
-                            selectedTab = index
-                            selectedRecipe = null
-                        },
-                        label = { Text(label) },
-                        icon = {},
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+            if (uiState.user != null) {
+                NavigationBar {
+                    tabs.forEachIndexed { index, label ->
+                        NavigationBarItem(
+                            selected = selectedTab == index,
+                            onClick = {
+                                selectedTab = index
+                                selectedRecipe = null
+                            },
+                            label = { Text(label) },
+                            icon = {},
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
@@ -129,26 +174,211 @@ fun MealPlannerApp() {
             color = MaterialTheme.colorScheme.background
         ) {
             val recipe = selectedRecipe
-            if (recipe != null) {
+            if (uiState.user == null) {
+                AuthScreen(
+                    isLoggingIn = uiState.isLoggingIn,
+                    isSigningUp = uiState.isSigningUp,
+                    loginErrorMessage = uiState.loginErrorMessage,
+                    signupErrorMessage = uiState.signupErrorMessage,
+                    onLogin = onLogin,
+                    onSignup = onSignup
+                )
+            } else if (uiState.isLoading) {
+                LoadingState()
+            } else if (uiState.errorMessage != null) {
+                ErrorState(
+                    message = uiState.errorMessage,
+                    onRetry = onRetry
+                )
+            } else if (recipe != null) {
                 RecipeDetailScreen(recipe = recipe)
             } else {
                 when (selectedTab) {
                     0 -> WeekPlanScreen(
-                        mealPlan = sampleMealPlan,
+                        mealPlan = uiState.mealPlan,
                         onRecipeClick = { selectedRecipe = it }
                     )
 
                     1 -> RecipesScreen(
-                        recipes = sampleRecipes,
+                        recipes = uiState.recipes,
                         onRecipeClick = { selectedRecipe = it }
                     )
 
                     else -> SuggestionsScreen(
-                        suggestions = sampleSuggestions,
+                        suggestions = uiState.suggestions,
                         onRecipeClick = { selectedRecipe = it }
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun AuthScreen(
+    isLoggingIn: Boolean,
+    isSigningUp: Boolean,
+    loginErrorMessage: String?,
+    signupErrorMessage: String?,
+    onLogin: (String, String) -> Unit,
+    onSignup: (String, String, String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isSignup by remember { mutableStateOf(false) }
+    var username by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    val isBusy = isLoggingIn || isSigningUp
+    val errorMessage = if (isSignup) signupErrorMessage else loginErrorMessage
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = if (isSignup) "Create Account" else "Welcome Back",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = if (isSignup) {
+                "Create your meal planner account."
+            } else {
+                "Sign in with your meal planner account."
+            },
+            modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isBusy,
+            singleLine = true,
+            label = { Text("Username") }
+        )
+        if (isSignup) {
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                enabled = !isBusy,
+                singleLine = true,
+                label = { Text("Email") }
+            )
+        }
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            enabled = !isBusy,
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            label = { Text("Password") }
+        )
+        if (errorMessage != null) {
+            Text(
+                text = errorMessage,
+                modifier = Modifier.padding(top = 12.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        Button(
+            onClick = {
+                if (isSignup) {
+                    onSignup(username.trim(), email.trim(), password)
+                } else {
+                    onLogin(username.trim(), password)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 20.dp),
+            enabled = !isBusy && username.isNotBlank() && password.isNotBlank() &&
+                (!isSignup || email.isNotBlank())
+        ) {
+            if (isBusy) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            } else {
+                Text(if (isSignup) "Create Account" else "Login")
+            }
+        }
+        TextButton(
+            onClick = { isSignup = !isSignup },
+            enabled = !isBusy,
+            modifier = Modifier.padding(top = 8.dp)
+        ) {
+            Text(if (isSignup) "Already have an account? Sign in" else "Create an account")
+        }
+    }
+}
+
+@Composable
+fun LoginScreen(
+    isLoggingIn: Boolean,
+    errorMessage: String?,
+    onLogin: (String, String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AuthScreen(
+        isLoggingIn = isLoggingIn,
+        isSigningUp = false,
+        loginErrorMessage = errorMessage,
+        signupErrorMessage = null,
+        onLogin = onLogin,
+        onSignup = { _, _, _ -> },
+        modifier = modifier
+    )
+}
+
+@Composable
+fun LoadingState(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator()
+    }
+}
+
+@Composable
+fun ErrorState(
+    message: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = "Could not load meal planner data",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = message,
+            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Button(onClick = onRetry) {
+            Text("Retry")
         }
     }
 }
@@ -159,6 +389,8 @@ fun WeekPlanScreen(
     onRecipeClick: (Recipe) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val currentWeekMealPlan = mealPlan.fitToCurrentWeek()
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -173,7 +405,7 @@ fun WeekPlanScreen(
         }
 
         item {
-            CalendarWeekStrip(mealPlan = mealPlan)
+            CalendarWeekStrip(mealPlan = currentWeekMealPlan)
         }
 
         item {
@@ -184,12 +416,56 @@ fun WeekPlanScreen(
             )
         }
 
-        items(mealPlan) { entry ->
+        items(currentWeekMealPlan) { entry ->
             CalendarAgendaCard(
                 entry = entry,
                 onRecipeClick = onRecipeClick
             )
         }
+    }
+}
+
+private data class WeekDay(
+    val day: String,
+    val dateLabel: String
+)
+
+private fun currentWeekDays(): List<WeekDay> {
+    val dayNameFormat = SimpleDateFormat("EEEE", Locale.getDefault())
+    val dateFormat = SimpleDateFormat("d", Locale.getDefault())
+    val calendar = Calendar.getInstance()
+    val firstDayOfWeek = calendar.firstDayOfWeek
+
+    while (calendar.get(Calendar.DAY_OF_WEEK) != firstDayOfWeek) {
+        calendar.add(Calendar.DAY_OF_MONTH, -1)
+    }
+
+    return List(7) {
+        val weekDay = WeekDay(
+            day = dayNameFormat.format(calendar.time),
+            dateLabel = dateFormat.format(calendar.time)
+        )
+        calendar.add(Calendar.DAY_OF_MONTH, 1)
+        weekDay
+    }
+}
+
+private fun List<MealPlanEntry>.fitToCurrentWeek(): List<MealPlanEntry> {
+    val entriesByDay = associateBy { it.day.lowercase(Locale.getDefault()) }
+
+    return currentWeekDays().mapIndexed { index, weekDay ->
+        val backendEntry = entriesByDay[weekDay.day.lowercase(Locale.getDefault())]
+
+        backendEntry?.copy(
+            day = weekDay.day,
+            dateLabel = weekDay.dateLabel
+        ) ?: MealPlanEntry(
+            id = -index - 1,
+            day = weekDay.day,
+            dateLabel = weekDay.dateLabel,
+            mealType = "Dinner",
+            recipe = null
+        )
     }
 }
 
@@ -258,7 +534,7 @@ fun SuggestionsScreen(
                         label = { Text("Prompt") }
                     )
                     Text(
-                        text = "Backend integration coming soon. These suggestions are sample data.",
+                        text = "Suggestions are loaded from the meal planner backend.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onTertiaryContainer
                     )
@@ -660,216 +936,16 @@ fun InstructionStep(
     }
 }
 
-data class Recipe(
-    val name: String,
-    val description: String,
-    val prepTime: Int,
-    val tags: List<String>,
-    val ingredients: List<String>,
-    val instructions: List<String>
-)
-
-data class MealPlanEntry(
-    val day: String,
-    val dateLabel: String,
-    val mealType: String,
-    val recipe: Recipe?
-)
-
-private val sampleRecipes = listOf(
-    Recipe(
-        name = "Lemon Herb Chicken Bowls",
-        description = "Grilled chicken with rice, cucumber, tomatoes, and a bright yogurt sauce.",
-        prepTime = 35,
-        tags = listOf("Healthy", "High Protein", "Dinner"),
-        ingredients = listOf(
-            "2 chicken breasts",
-            "2 cups cooked rice",
-            "1 cucumber, chopped",
-            "1 cup cherry tomatoes, halved",
-            "1/2 cup Greek yogurt",
-            "1 lemon",
-            "Fresh parsley and dill"
-        ),
-        instructions = listOf(
-            "Cook the rice according to package directions.",
-            "Season the chicken with salt, pepper, lemon zest, and herbs.",
-            "Grill or sear the chicken until cooked through, then slice.",
-            "Mix Greek yogurt with lemon juice, herbs, salt, and pepper.",
-            "Assemble rice, vegetables, chicken, and sauce in bowls."
-        )
-    ),
-    Recipe(
-        name = "Veggie Pesto Pasta",
-        description = "Pasta tossed with basil pesto, roasted zucchini, cherry tomatoes, and parmesan.",
-        prepTime = 25,
-        tags = listOf("Quick", "Vegetarian", "Family"),
-        ingredients = listOf(
-            "12 oz pasta",
-            "1/2 cup basil pesto",
-            "2 zucchini, sliced",
-            "1 cup cherry tomatoes",
-            "1/3 cup grated parmesan",
-            "Olive oil",
-            "Salt and black pepper"
-        ),
-        instructions = listOf(
-            "Boil pasta in salted water until al dente.",
-            "Roast zucchini and tomatoes with olive oil, salt, and pepper.",
-            "Reserve a splash of pasta water, then drain the pasta.",
-            "Toss pasta with pesto, vegetables, and reserved pasta water.",
-            "Finish with parmesan and serve warm."
-        )
-    ),
-    Recipe(
-        name = "Turkey Taco Lettuce Wraps",
-        description = "Seasoned turkey, black beans, avocado, salsa, and crunchy romaine leaves.",
-        prepTime = 30,
-        tags = listOf("Low Carb", "Quick", "Meal Prep"),
-        ingredients = listOf(
-            "1 lb ground turkey",
-            "1 tbsp taco seasoning",
-            "1 cup black beans",
-            "1 avocado, diced",
-            "1/2 cup salsa",
-            "Romaine lettuce leaves",
-            "Lime wedges"
-        ),
-        instructions = listOf(
-            "Brown the turkey in a skillet over medium heat.",
-            "Add taco seasoning and a splash of water, then simmer briefly.",
-            "Warm the black beans and prep avocado, salsa, and lettuce.",
-            "Spoon turkey and beans into lettuce leaves.",
-            "Top with avocado, salsa, and lime juice."
-        )
-    ),
-    Recipe(
-        name = "Coconut Lentil Curry",
-        description = "Red lentils simmered with coconut milk, ginger, garlic, and warm curry spices.",
-        prepTime = 40,
-        tags = listOf("Vegetarian", "Cozy", "One Pot"),
-        ingredients = listOf(
-            "1 cup red lentils",
-            "1 can coconut milk",
-            "2 cups vegetable broth",
-            "1 onion, diced",
-            "2 garlic cloves, minced",
-            "1 tbsp grated ginger",
-            "2 tbsp curry powder"
-        ),
-        instructions = listOf(
-            "Saute onion, garlic, and ginger until fragrant.",
-            "Stir in curry powder and cook for 30 seconds.",
-            "Add lentils, coconut milk, and vegetable broth.",
-            "Simmer until lentils are tender and creamy.",
-            "Season to taste and serve with rice or naan."
-        )
-    ),
-    Recipe(
-        name = "Salmon Rice Plates",
-        description = "Roasted salmon served with steamed rice, edamame, carrots, and sesame sauce.",
-        prepTime = 30,
-        tags = listOf("Omega-3", "Balanced", "Dinner"),
-        ingredients = listOf(
-            "2 salmon fillets",
-            "2 cups cooked rice",
-            "1 cup shelled edamame",
-            "1 carrot, shredded",
-            "2 tbsp soy sauce",
-            "1 tbsp sesame oil",
-            "Sesame seeds"
-        ),
-        instructions = listOf(
-            "Roast salmon until it flakes easily with a fork.",
-            "Steam edamame and prepare the rice.",
-            "Whisk soy sauce, sesame oil, and a splash of water.",
-            "Build plates with rice, salmon, edamame, and carrot.",
-            "Drizzle with sauce and sprinkle with sesame seeds."
-        )
-    )
-)
-
-private val sampleSuggestions = listOf(
-    Recipe(
-        name = "Sheet Pan Fajita Bowls",
-        description = "Peppers, onions, and chicken roasted together for easy rice bowls.",
-        prepTime = 35,
-        tags = listOf("Suggested", "Sheet Pan", "Easy"),
-        ingredients = listOf(
-            "2 chicken breasts, sliced",
-            "2 bell peppers, sliced",
-            "1 onion, sliced",
-            "2 tbsp fajita seasoning",
-            "2 cups cooked rice",
-            "Salsa",
-            "Sour cream"
-        ),
-        instructions = listOf(
-            "Toss chicken, peppers, and onion with fajita seasoning.",
-            "Spread everything on a sheet pan.",
-            "Roast until the chicken is cooked through and vegetables are tender.",
-            "Serve over rice with salsa and sour cream."
-        )
-    ),
-    Recipe(
-        name = "Miso Mushroom Noodles",
-        description = "Savory noodles with mushrooms, bok choy, scallions, and a miso broth base.",
-        prepTime = 20,
-        tags = listOf("Suggested", "Quick", "Vegetarian"),
-        ingredients = listOf(
-            "8 oz noodles",
-            "2 cups sliced mushrooms",
-            "2 cups chopped bok choy",
-            "2 tbsp miso paste",
-            "3 cups vegetable broth",
-            "2 scallions",
-            "Sesame oil"
-        ),
-        instructions = listOf(
-            "Cook noodles according to package directions.",
-            "Saute mushrooms in sesame oil until browned.",
-            "Add broth and bok choy, then simmer until tender.",
-            "Whisk in miso paste off the heat.",
-            "Serve broth and vegetables over noodles with scallions."
-        )
-    ),
-    Recipe(
-        name = "Greek Chickpea Pitas",
-        description = "Warm pitas filled with chickpeas, cucumber salad, feta, and tzatziki.",
-        prepTime = 18,
-        tags = listOf("Suggested", "No Cook", "Lunch"),
-        ingredients = listOf(
-            "4 pita breads",
-            "1 can chickpeas, drained",
-            "1 cucumber, chopped",
-            "1 cup cherry tomatoes",
-            "1/2 cup feta",
-            "1/2 cup tzatziki",
-            "Fresh dill"
-        ),
-        instructions = listOf(
-            "Warm the pitas in a skillet or oven.",
-            "Toss chickpeas, cucumber, tomatoes, feta, and dill together.",
-            "Spread tzatziki inside each pita.",
-            "Fill pitas with the chickpea mixture and serve."
-        )
-    )
-)
-
-private val sampleMealPlan = listOf(
-    MealPlanEntry("Monday", "12", "Dinner", sampleRecipes[0]),
-    MealPlanEntry("Tuesday", "13", "Dinner", sampleRecipes[1]),
-    MealPlanEntry("Wednesday", "14", "Dinner", null),
-    MealPlanEntry("Thursday", "15", "Dinner", sampleRecipes[2]),
-    MealPlanEntry("Friday", "16", "Dinner", sampleRecipes[3]),
-    MealPlanEntry("Saturday", "17", "Dinner", null),
-    MealPlanEntry("Sunday", "18", "Dinner", sampleRecipes[4])
-)
-
 @Preview(showBackground = true)
 @Composable
 fun MealPlannerPreview() {
     MealPlannerTheme {
-        MealPlannerApp()
+        MealPlannerContent(
+            uiState = MealPlannerUiState(),
+            onLogin = { _, _ -> },
+            onSignup = { _, _, _ -> },
+            onLogout = {},
+            onRetry = {}
+        )
     }
 }
